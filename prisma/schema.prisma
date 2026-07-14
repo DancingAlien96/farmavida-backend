@@ -1,0 +1,266 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  // CommonJS + imports con extensión .js para que el cliente funcione compilado
+  // con tsc (module: commonjs) y ejecutado con node en producción.
+  moduleFormat        = "cjs"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── ROLES & USUARIOS ────────────────────────────────────────────────────────
+
+enum Rol {
+  ADMIN
+  FARMACEUTICO
+  CLIENTE
+}
+
+model Usuario {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  rol          Rol       @default(CLIENTE)
+  activo       Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  cliente      Cliente?
+  ventas       Venta[]   @relation("VentaFarmaceutico")
+
+  @@map("usuarios")
+}
+
+model Cliente {
+  id              Int       @id @default(autoincrement())
+  usuarioId       Int       @unique @map("usuario_id")
+  nombres         String
+  apellidos       String
+  dpi             String?   @unique
+  nit             String?
+  telefono        String?
+  direccion       String?
+  fechaNacimiento DateTime? @map("fecha_nacimiento")
+
+  usuario         Usuario   @relation(fields: [usuarioId], references: [id])
+  ventas          Venta[]
+  recetas         Receta[]
+
+  @@map("clientes")
+}
+
+// ─── CATÁLOGO ─────────────────────────────────────────────────────────────────
+
+model Categoria {
+  id         Int         @id @default(autoincrement())
+  nombre     String      @unique
+  parentId   Int?        @map("parent_id")
+
+  parent     Categoria?  @relation("Subcategorias", fields: [parentId], references: [id])
+  hijos      Categoria[] @relation("Subcategorias")
+  productos  Producto[]
+
+  @@map("categorias")
+}
+
+model Laboratorio {
+  id        Int        @id @default(autoincrement())
+  nombre    String     @unique
+  pais      String?
+
+  productos Producto[]
+
+  @@map("laboratorios")
+}
+
+model Producto {
+  id               Int       @id @default(autoincrement())
+  nombre           String
+  codigoBarras     String?   @unique @map("codigo_barras")
+  descripcion      String?
+  imagen           String?   @db.Text
+  presentacion     String?
+  concentracion    String?
+  precioVenta      Decimal   @map("precio_venta") @db.Decimal(10, 2)
+  stockMinimo      Int       @default(5) @map("stock_minimo")
+  requiereReceta   Boolean   @default(false) @map("requiere_receta")
+  activo           Boolean   @default(true)
+  categoriaId      Int       @map("categoria_id")
+  laboratorioId    Int?      @map("laboratorio_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  categoria        Categoria   @relation(fields: [categoriaId], references: [id])
+  laboratorio      Laboratorio? @relation(fields: [laboratorioId], references: [id])
+  lotes            Lote[]
+  detalleRecetas   DetalleReceta[]
+
+  @@map("productos")
+}
+
+// ─── INVENTARIO / LOTES ───────────────────────────────────────────────────────
+
+model Lote {
+  id               Int       @id @default(autoincrement())
+  productoId       Int       @map("producto_id")
+  nroLote          String    @map("nro_lote")
+  fechaVencimiento DateTime  @map("fecha_vencimiento")
+  cantidadActual   Int       @default(0) @map("cantidad_actual")
+  precioCosto      Decimal   @map("precio_costo") @db.Decimal(10, 2)
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  producto         Producto  @relation(fields: [productoId], references: [id])
+  detalleCompras   DetalleCompra[]
+  detalleVentas    DetalleVenta[]
+
+  @@map("lotes")
+}
+
+// ─── PROVEEDORES & COMPRAS ────────────────────────────────────────────────────
+
+model Proveedor {
+  id        Int       @id @default(autoincrement())
+  nombre    String
+  ruc       String?   @unique
+  contacto  String?
+  telefono  String?
+  email     String?
+  activo    Boolean   @default(true)
+
+  compras   Compra[]
+
+  @@map("proveedores")
+}
+
+model Compra {
+  id           Int            @id @default(autoincrement())
+  proveedorId  Int            @map("proveedor_id")
+  fecha        DateTime       @default(now())
+  total        Decimal        @db.Decimal(10, 2)
+  estado       EstadoCompra   @default(PENDIENTE)
+  observacion  String?
+
+  proveedor    Proveedor      @relation(fields: [proveedorId], references: [id])
+  detalles     DetalleCompra[]
+
+  @@map("compras")
+}
+
+enum EstadoCompra {
+  PENDIENTE
+  RECIBIDA
+  ANULADA
+}
+
+model DetalleCompra {
+  id          Int      @id @default(autoincrement())
+  compraId    Int      @map("compra_id")
+  loteId      Int      @map("lote_id")
+  cantidad    Int
+  precioCosto Decimal  @map("precio_costo") @db.Decimal(10, 2)
+
+  compra      Compra   @relation(fields: [compraId], references: [id])
+  lote        Lote     @relation(fields: [loteId], references: [id])
+
+  @@map("detalle_compras")
+}
+
+// ─── RECETAS MÉDICAS ──────────────────────────────────────────────────────────
+
+model Medico {
+  id              Int      @id @default(autoincrement())
+  nombres         String
+  apellidos       String
+  nroColegiatura  String?  @unique @map("nro_colegiatura")
+  especialidad    String?
+
+  recetas         Receta[]
+
+  @@map("medicos")
+}
+
+model Receta {
+  id         Int           @id @default(autoincrement())
+  clienteId  Int           @map("cliente_id")
+  medicoId   Int?          @map("medico_id")
+  fecha      DateTime      @default(now())
+  imagen     String?
+  estado     EstadoReceta  @default(PENDIENTE)
+
+  cliente    Cliente       @relation(fields: [clienteId], references: [id])
+  medico     Medico?       @relation(fields: [medicoId], references: [id])
+  detalles   DetalleReceta[]
+  ventas     Venta[]
+
+  @@map("recetas")
+}
+
+enum EstadoReceta {
+  PENDIENTE
+  DISPENSADA
+  PARCIAL
+  VENCIDA
+}
+
+model DetalleReceta {
+  id                  Int      @id @default(autoincrement())
+  recetaId            Int      @map("receta_id")
+  productoId          Int      @map("producto_id")
+  cantidadPrescrita   Int      @map("cantidad_prescrita")
+  indicaciones        String?
+
+  receta              Receta   @relation(fields: [recetaId], references: [id])
+  producto            Producto @relation(fields: [productoId], references: [id])
+
+  @@map("detalle_recetas")
+}
+
+// ─── VENTAS / POS ─────────────────────────────────────────────────────────────
+
+enum MetodoPago {
+  EFECTIVO
+  TARJETA
+  TRANSFERENCIA
+  YAPE
+  PLIN
+}
+
+enum EstadoVenta {
+  COMPLETADA
+  ANULADA
+}
+
+model Venta {
+  id              Int          @id @default(autoincrement())
+  farmaceuticoId  Int          @map("farmaceutico_id")
+  clienteId       Int?         @map("cliente_id")
+  recetaId        Int?         @map("receta_id")
+  fecha           DateTime     @default(now())
+  total           Decimal      @db.Decimal(10, 2)
+  metodoPago      MetodoPago   @default(EFECTIVO) @map("metodo_pago")
+  estado          EstadoVenta  @default(COMPLETADA)
+  observacion     String?
+
+  farmaceutico    Usuario      @relation("VentaFarmaceutico", fields: [farmaceuticoId], references: [id])
+  cliente         Cliente?     @relation(fields: [clienteId], references: [id])
+  receta          Receta?      @relation(fields: [recetaId], references: [id])
+  detalles        DetalleVenta[]
+
+  @@map("ventas")
+}
+
+model DetalleVenta {
+  id          Int      @id @default(autoincrement())
+  ventaId     Int      @map("venta_id")
+  loteId      Int      @map("lote_id")
+  cantidad    Int
+  precioUnit  Decimal  @map("precio_unit") @db.Decimal(10, 2)
+  subtotal    Decimal  @db.Decimal(10, 2)
+
+  venta       Venta    @relation(fields: [ventaId], references: [id])
+  lote        Lote     @relation(fields: [loteId], references: [id])
+
+  @@map("detalle_ventas")
+}

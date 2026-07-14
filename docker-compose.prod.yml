@@ -1,0 +1,39 @@
+# Producción: base de datos + backend en un solo stack.
+# Uso:  docker compose -f docker-compose.prod.yml up -d --build
+# Requiere un archivo .env con: DB_USER, DB_PASSWORD, DB_NAME, JWT_SECRET
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: farmavida_db_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - farmavida_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # La BD NO se expone al host en producción — solo la usa el backend por la red interna.
+
+  backend:
+    build: .
+    container_name: farmavida_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # El backend se conecta al servicio "postgres" por la red interna (puerto 5432)
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET}
+      PORT: 3000
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+
+volumes:
+  farmavida_pgdata:
