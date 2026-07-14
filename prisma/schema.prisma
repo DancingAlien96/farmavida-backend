@@ -1,10 +1,10 @@
 generator client {
   provider     = "prisma-client"
   output       = "../generated/prisma"
-  // CommonJS + imports con extensión .js para que el cliente funcione compilado
-  // con tsc (module: commonjs) y ejecutado con node en producción.
+  // CommonJS + imports sin extensión: funciona tanto en dev (ts-node → .ts)
+  // como en producción compilada (node → .js).
   moduleFormat        = "cjs"
-  importFileExtension = "js"
+  importFileExtension = ""
 }
 
 datasource db {
