@@ -49,11 +49,15 @@ Esto:
 2. Compila el backend y **aplica las migraciones automáticamente** al arrancar.
 3. Expone la API en `http://localhost:3000` (health check en `/health`).
 
-**Primer despliegue** — crea los usuarios iniciales una sola vez:
+**Primer despliegue** — crea los usuarios iniciales y todas las categorías (una sola vez):
 
 ```bash
 docker compose -f docker-compose.prod.yml exec backend npm run seed:prod
 ```
+
+Deja la base lista con: 2 usuarios (admin + farmacéutico) y el árbol completo de
+categorías. Sin productos, clientes, proveedores ni ventas (es idempotente: puedes
+volver a correrlo sin duplicar).
 
 ### Comandos útiles
 

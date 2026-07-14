@@ -25,6 +25,42 @@ const usuarios: { email: string; password: string; nombres: string; apellidos: s
   },
 ];
 
+// Árbol de categorías de farmacia (raíz → subcategorías).
+const categorias: { nombre: string; hijos: string[] }[] = [
+  {
+    nombre: "Medicamentos",
+    hijos: [
+      "Analgésicos", "Antibióticos", "Antiinflamatorios", "Antihistamínicos / Alergias",
+      "Antipiréticos", "Digestivo / Antiácidos", "Respiratorio / Antitusivos",
+      "Cardiovascular", "Diabetes", "Dermatológicos", "Oftalmológicos", "Vitaminas y suplementos",
+    ],
+  },
+  {
+    nombre: "Cuidado Personal",
+    hijos: ["Higiene oral", "Higiene corporal", "Cuidado capilar", "Cuidado facial", "Desodorantes", "Protección solar"],
+  },
+  {
+    nombre: "Cuidado del Bebé",
+    hijos: ["Pañales", "Fórmulas lácteas", "Cremas y talcos", "Accesorios"],
+  },
+  {
+    nombre: "Primeros Auxilios",
+    hijos: ["Vendajes y gasas", "Antisépticos", "Curitas y apósitos", "Material de curación"],
+  },
+  {
+    nombre: "Dispositivos Médicos",
+    hijos: ["Termómetros", "Tensiómetros", "Glucómetros", "Mascarillas"],
+  },
+  {
+    nombre: "Salud Sexual",
+    hijos: ["Anticonceptivos", "Preservativos", "Pruebas de embarazo"],
+  },
+  {
+    nombre: "Nutrición y Dietética",
+    hijos: ["Suplementos deportivos", "Productos dietéticos", "Alimentos especiales"],
+  },
+];
+
 async function main() {
   console.log("🌱 Iniciando seed...");
 
@@ -59,6 +95,25 @@ async function main() {
 
     console.log(`  ✅ Creado: ${u.email} (${u.rol}) — pass: ${u.password}`);
   }
+
+  // Categorías (idempotente por nombre único)
+  let creadas = 0;
+  for (const raiz of categorias) {
+    const padre = await prisma.categoria.upsert({
+      where: { nombre: raiz.nombre },
+      update: {},
+      create: { nombre: raiz.nombre },
+    });
+    for (const hijo of raiz.hijos) {
+      const res = await prisma.categoria.upsert({
+        where: { nombre: hijo },
+        update: {},
+        create: { nombre: hijo, parentId: padre.id },
+      });
+      if (res) creadas++;
+    }
+  }
+  console.log(`  ✅ Categorías listas (${categorias.length} raíces + ${creadas} subcategorías)`);
 
   console.log("🌱 Seed completado.");
 }
