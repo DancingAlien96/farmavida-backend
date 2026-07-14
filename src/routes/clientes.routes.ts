@@ -1,5 +1,6 @@
 import { Router, Response } from "express";
 import bcrypt from "bcryptjs";
+import { randomInt } from "crypto";
 import { prisma } from "../lib/prisma";
 import { autenticar, autorizar, AuthRequest } from "../middlewares/auth.middleware";
 import { Rol } from "../../generated/prisma/enums";
@@ -13,7 +14,7 @@ function generarPasswordTemporal(): string {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
   let out = "";
   for (let i = 0; i < 10; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
+    out += chars[randomInt(chars.length)]; // aleatoriedad criptográficamente segura
   }
   return out;
 }
