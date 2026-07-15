@@ -32,6 +32,11 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       PORT: 3000
       NODE_ENV: production
+      # Notificaciones por correo (opcional: si van vacías, no se envían correos)
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      NOTIFY_EMAIL: ${NOTIFY_EMAIL:-}
+      TZ: America/Guatemala
     ports:
       - "3000:3000"
 

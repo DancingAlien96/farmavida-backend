@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { autenticar, autorizar, AuthRequest } from "../middlewares/auth.middleware";
 import { MetodoPago } from "../../generated/prisma/enums";
+import { notificarVenta, notificarStockBajo } from "../lib/notificaciones";
 
 const router = Router();
 
@@ -21,7 +22,7 @@ router.get(
       include: {
         farmaceutico: { select: { email: true } },
         cliente: { select: { nombres: true, apellidos: true } },
-        detalles: { include: { lote: { include: { producto: true } } } },
+        detalles: { include: { producto: true } },
       },
       orderBy: { fecha: "desc" },
     });
@@ -36,7 +37,7 @@ router.post(
   autorizar("ADMIN", "FARMACEUTICO"),
   async (req: AuthRequest, res: Response) => {
     const { clienteId, recetaId, metodoPago, items } = req.body;
-    // items: [{ loteId, cantidad }] — el precio se toma del producto en BD, nunca del cliente.
+    // items: [{ productoId, cantidad }] — el precio se toma del producto en BD, nunca del cliente.
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       res.status(400).json({ error: "La venta debe tener al menos un ítem" });
@@ -50,8 +51,8 @@ router.post(
         res.status(400).json({ error: "La cantidad de cada ítem debe ser un entero mayor a 0" });
         return;
       }
-      if (!Number.isInteger(Number(item.loteId))) {
-        res.status(400).json({ error: "loteId inválido" });
+      if (!Number.isInteger(Number(item.productoId))) {
+        res.status(400).json({ error: "productoId inválido" });
         return;
       }
     }
@@ -68,27 +69,26 @@ router.post(
 
       for (const item of items) {
         const cantidad = Number(item.cantidad);
-        const lote = await tx.lote.findUnique({
-          where: { id: Number(item.loteId) },
-          include: { producto: true },
+        const producto = await tx.producto.findUnique({
+          where: { id: Number(item.productoId) },
         });
-        if (!lote) throw new Error(`Lote ${item.loteId} no encontrado`);
-        if (lote.cantidadActual < cantidad) {
+        if (!producto) throw new Error(`Producto ${item.productoId} no encontrado`);
+        if (producto.stock < cantidad) {
           throw new Error(
-            `Stock insuficiente en lote ${item.loteId}: disponible ${lote.cantidadActual}`
+            `Stock insuficiente de "${producto.nombre}": disponible ${producto.stock}`
           );
         }
 
         // El precio unitario SIEMPRE proviene del producto en BD, no del cliente.
-        const precioUnit = Number(lote.producto.precioVenta);
+        const precioUnit = Number(producto.precioVenta);
         const subtotal = precioUnit * cantidad;
         total += subtotal;
-        detalles.push({ loteId: lote.id, cantidad, precioUnit, subtotal });
+        detalles.push({ productoId: producto.id, cantidad, precioUnit, subtotal });
 
         // Descontar stock
-        await tx.lote.update({
-          where: { id: lote.id },
-          data: { cantidadActual: { decrement: cantidad } },
+        await tx.producto.update({
+          where: { id: producto.id },
+          data: { stock: { decrement: cantidad } },
         });
       }
 
@@ -108,11 +108,17 @@ router.post(
     });
 
     res.status(201).json(venta);
+
+    // Notificaciones por correo — en segundo plano, después de responder.
+    // Nunca deben afectar el resultado de la venta.
+    const productoIds = venta.detalles.map((d) => d.productoId);
+    notificarVenta(venta.id).catch(() => {});
+    notificarStockBajo(productoIds).catch(() => {});
   }
 );
 
 // PATCH /api/ventas/:id/anular — solo admin.
-// Anula una venta COMPLETADA y devuelve el stock a los lotes.
+// Anula una venta y devuelve el stock al producto.
 router.patch(
   "/:id/anular",
   autenticar,
@@ -136,11 +142,11 @@ router.patch(
     }
 
     await prisma.$transaction(async (tx) => {
-      // Devolver el stock vendido a cada lote
+      // Devolver el stock vendido a cada producto
       for (const d of venta.detalles) {
-        await tx.lote.update({
-          where: { id: d.loteId },
-          data: { cantidadActual: { increment: d.cantidad } },
+        await tx.producto.update({
+          where: { id: d.productoId },
+          data: { stock: { increment: d.cantidad } },
         });
       }
       await tx.venta.update({

@@ -67,7 +67,7 @@ async function main() {
   const catFallback = cats[0]?.id;
 
   // ── Productos + lote inicial ──────────────────────────────────────────────────
-  const sellables: { loteId: number; precio: number; remaining: number }[] = [];
+  const sellables: { productoId: number; precio: number; remaining: number }[] = [];
   let creados = 0;
   for (const p of PRODUCTOS) {
     const yaExiste = await prisma.producto.findFirst({ where: { nombre: p.nombre } });
@@ -86,27 +86,18 @@ async function main() {
         presentacion: p.pres,
         concentracion: p.conc,
         precioVenta: p.precio,
+        stock: p.stock,
         stockMinimo: p.min,
+        fechaVencimiento: venc,
         requiereReceta: p.receta,
         categoriaId: categoriaId!,
         laboratorioId: labMap.get(p.lab),
-        ...(p.stock > 0 && {
-          lotes: {
-            create: {
-              nroLote: `LT-${new Date().getFullYear()}-${rnd(100, 999)}`,
-              cantidadActual: p.stock,
-              fechaVencimiento: venc,
-              precioCosto: +(p.precio * 0.6).toFixed(2),
-            },
-          },
-        }),
       },
-      include: { lotes: true },
     });
     creados++;
     // Solo los productos con stock alto entran al pool de ventas (no los "bajos")
-    if (p.stock >= 40 && producto.lotes[0]) {
-      sellables.push({ loteId: producto.lotes[0].id, precio: p.precio, remaining: p.stock });
+    if (p.stock >= 40) {
+      sellables.push({ productoId: producto.id, precio: p.precio, remaining: p.stock });
     }
   }
   console.log(`  ✅ Productos creados: ${creados} (${PRODUCTOS.length - creados} ya existían)`);
@@ -160,20 +151,20 @@ async function main() {
         fecha.setHours(rnd(8, 19), rnd(0, 59), rnd(0, 59), 0);
 
         const nItems = rnd(1, 3);
-        const detalles: { loteId: number; cantidad: number; precioUnit: number; subtotal: number }[] = [];
+        const detalles: { productoId: number; cantidad: number; precioUnit: number; subtotal: number }[] = [];
         const usados = new Set<number>();
         let total = 0;
 
         for (let it = 0; it < nItems; it++) {
           const s = pick(sellables);
-          if (usados.has(s.loteId) || s.remaining < 1) continue;
+          if (usados.has(s.productoId) || s.remaining < 1) continue;
           const cantidad = Math.min(rnd(1, 4), s.remaining);
           if (cantidad < 1) continue;
-          usados.add(s.loteId);
+          usados.add(s.productoId);
           s.remaining -= cantidad;
           const subtotal = +(s.precio * cantidad).toFixed(2);
           total += subtotal;
-          detalles.push({ loteId: s.loteId, cantidad, precioUnit: s.precio, subtotal });
+          detalles.push({ productoId: s.productoId, cantidad, precioUnit: s.precio, subtotal });
         }
         if (detalles.length === 0) continue;
 
@@ -193,11 +184,11 @@ async function main() {
       }
     }
 
-    // Actualizar el stock de los lotes según lo vendido
+    // Actualizar el stock de los productos según lo vendido
     for (const s of sellables) {
-      await prisma.lote.update({
-        where: { id: s.loteId },
-        data: { cantidadActual: s.remaining },
+      await prisma.producto.update({
+        where: { id: s.productoId },
+        data: { stock: s.remaining },
       });
     }
     console.log(`  ✅ Ventas creadas: ${totalVentas}`);

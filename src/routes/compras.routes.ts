@@ -6,10 +6,10 @@ const router = Router();
 
 interface ItemCompra {
   productoId: number;
-  nroLote: string;
   cantidad: number;
-  fechaVencimiento: string;
   precioCosto: number;
+  // Opcional: si viene, actualiza la fecha de vencimiento del producto.
+  fechaVencimiento?: string;
 }
 
 // GET /api/compras — autenticado
@@ -42,11 +42,7 @@ router.get("/:id", autenticar, async (req: AuthRequest, res: Response) => {
       proveedor: true,
       detalles: {
         include: {
-          lote: {
-            include: {
-              producto: { select: { id: true, nombre: true, presentacion: true } },
-            },
-          },
+          producto: { select: { id: true, nombre: true, presentacion: true } },
         },
       },
     },
@@ -69,12 +65,7 @@ router.get("/:id", autenticar, async (req: AuthRequest, res: Response) => {
       cantidad: d.cantidad,
       precioCosto: d.precioCosto,
       subtotal: Number(d.precioCosto) * d.cantidad,
-      lote: {
-        id: d.lote.id,
-        nroLote: d.lote.nroLote,
-        fechaVencimiento: d.lote.fechaVencimiento,
-        producto: d.lote.producto,
-      },
+      producto: d.producto,
     })),
   });
 });
@@ -99,16 +90,21 @@ router.post("/", autenticar, autorizar("ADMIN"), async (req: AuthRequest, res: R
 
   // Validar items
   for (const [i, it] of items.entries()) {
-    if (!it.productoId || !it.nroLote || !it.cantidad || !it.fechaVencimiento || it.precioCosto === undefined) {
-      res.status(400).json({ error: `Item #${i + 1}: todos los campos son obligatorios` });
+    if (!it.productoId || it.cantidad === undefined || it.precioCosto === undefined) {
+      res.status(400).json({ error: `Item #${i + 1}: producto, cantidad y precio costo son obligatorios` });
       return;
     }
-    if (Number(it.cantidad) <= 0) {
-      res.status(400).json({ error: `Item #${i + 1}: la cantidad debe ser mayor a 0` });
+    if (!Number.isInteger(Number(it.cantidad)) || Number(it.cantidad) <= 0) {
+      res.status(400).json({ error: `Item #${i + 1}: la cantidad debe ser un entero mayor a 0` });
       return;
     }
     if (Number(it.precioCosto) < 0) {
       res.status(400).json({ error: `Item #${i + 1}: el precio costo no puede ser negativo` });
+      return;
+    }
+    const existe = await prisma.producto.findUnique({ where: { id: Number(it.productoId) } });
+    if (!existe) {
+      res.status(404).json({ error: `Item #${i + 1}: producto no encontrado` });
       return;
     }
   }
@@ -138,20 +134,20 @@ router.post("/", autenticar, autorizar("ADMIN"), async (req: AuthRequest, res: R
     });
 
     for (const it of items) {
-      const lote = await tx.lote.create({
+      // Suma la cantidad comprada al stock del producto y,
+      // si se indicó, actualiza su fecha de vencimiento.
+      await tx.producto.update({
+        where: { id: Number(it.productoId) },
         data: {
-          productoId: Number(it.productoId),
-          nroLote: String(it.nroLote),
-          cantidadActual: Number(it.cantidad),
-          fechaVencimiento: new Date(it.fechaVencimiento),
-          precioCosto: it.precioCosto,
+          stock: { increment: Number(it.cantidad) },
+          ...(it.fechaVencimiento && { fechaVencimiento: new Date(it.fechaVencimiento) }),
         },
       });
 
       await tx.detalleCompra.create({
         data: {
           compraId: nuevaCompra.id,
-          loteId: lote.id,
+          productoId: Number(it.productoId),
           cantidad: Number(it.cantidad),
           precioCosto: it.precioCosto,
         },
@@ -171,7 +167,7 @@ router.patch("/:id/anular", autenticar, autorizar("ADMIN"), async (req: AuthRequ
 
   const compra = await prisma.compra.findUnique({
     where: { id },
-    include: { detalles: { include: { lote: { include: { detalleVentas: true } } } } },
+    include: { detalles: { include: { producto: true } } },
   });
 
   if (!compra) {
@@ -183,22 +179,22 @@ router.patch("/:id/anular", autenticar, autorizar("ADMIN"), async (req: AuthRequ
     return;
   }
 
-  // Si algún lote tiene ventas, no se puede anular limpiamente
+  // No se puede anular si esa mercadería ya se vendió (el stock quedaría negativo)
   for (const d of compra.detalles) {
-    if (d.lote.detalleVentas.length > 0) {
+    if (d.producto.stock < d.cantidad) {
       res.status(409).json({
-        error: `No se puede anular: el lote ${d.lote.nroLote} ya tiene ventas registradas`,
+        error: `No se puede anular: "${d.producto.nombre}" ya no tiene las ${d.cantidad} unidades de esta compra en stock (quedan ${d.producto.stock}). Probablemente ya se vendieron.`,
       });
       return;
     }
   }
 
   await prisma.$transaction(async (tx) => {
-    // Restar stock de los lotes (en este flujo simple, los lotes solo se usaron para esta compra)
+    // Devolver (restar) del stock lo que había entrado con esta compra
     for (const d of compra.detalles) {
-      await tx.lote.update({
-        where: { id: d.loteId },
-        data: { cantidadActual: { decrement: d.cantidad } },
+      await tx.producto.update({
+        where: { id: d.productoId },
+        data: { stock: { decrement: d.cantidad } },
       });
     }
     await tx.compra.update({

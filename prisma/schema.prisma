@@ -85,37 +85,22 @@ model Producto {
   presentacion     String?
   concentracion    String?
   precioVenta      Decimal   @map("precio_venta") @db.Decimal(10, 2)
+  stock            Int       @default(0)
   stockMinimo      Int       @default(5) @map("stock_minimo")
+  fechaVencimiento DateTime? @map("fecha_vencimiento")
   requiereReceta   Boolean   @default(false) @map("requiere_receta")
   activo           Boolean   @default(true)
-  categoriaId      Int       @map("categoria_id")
+  categoriaId      Int?      @map("categoria_id")
   laboratorioId    Int?      @map("laboratorio_id")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  categoria        Categoria   @relation(fields: [categoriaId], references: [id])
+  categoria        Categoria?  @relation(fields: [categoriaId], references: [id])
   laboratorio      Laboratorio? @relation(fields: [laboratorioId], references: [id])
-  lotes            Lote[]
+  detalleCompras   DetalleCompra[]
+  detalleVentas    DetalleVenta[]
   detalleRecetas   DetalleReceta[]
 
   @@map("productos")
-}
-
-// ─── INVENTARIO / LOTES ───────────────────────────────────────────────────────
-
-model Lote {
-  id               Int       @id @default(autoincrement())
-  productoId       Int       @map("producto_id")
-  nroLote          String    @map("nro_lote")
-  fechaVencimiento DateTime  @map("fecha_vencimiento")
-  cantidadActual   Int       @default(0) @map("cantidad_actual")
-  precioCosto      Decimal   @map("precio_costo") @db.Decimal(10, 2)
-  createdAt        DateTime  @default(now()) @map("created_at")
-
-  producto         Producto  @relation(fields: [productoId], references: [id])
-  detalleCompras   DetalleCompra[]
-  detalleVentas    DetalleVenta[]
-
-  @@map("lotes")
 }
 
 // ─── PROVEEDORES & COMPRAS ────────────────────────────────────────────────────
@@ -157,12 +142,12 @@ enum EstadoCompra {
 model DetalleCompra {
   id          Int      @id @default(autoincrement())
   compraId    Int      @map("compra_id")
-  loteId      Int      @map("lote_id")
+  productoId  Int      @map("producto_id")
   cantidad    Int
   precioCosto Decimal  @map("precio_costo") @db.Decimal(10, 2)
 
   compra      Compra   @relation(fields: [compraId], references: [id])
-  lote        Lote     @relation(fields: [loteId], references: [id])
+  producto    Producto @relation(fields: [productoId], references: [id])
 
   @@map("detalle_compras")
 }
@@ -254,13 +239,13 @@ model Venta {
 model DetalleVenta {
   id          Int      @id @default(autoincrement())
   ventaId     Int      @map("venta_id")
-  loteId      Int      @map("lote_id")
+  productoId  Int      @map("producto_id")
   cantidad    Int
   precioUnit  Decimal  @map("precio_unit") @db.Decimal(10, 2)
   subtotal    Decimal  @db.Decimal(10, 2)
 
   venta       Venta    @relation(fields: [ventaId], references: [id])
-  lote        Lote     @relation(fields: [loteId], references: [id])
+  producto    Producto @relation(fields: [productoId], references: [id])
 
   @@map("detalle_ventas")
 }

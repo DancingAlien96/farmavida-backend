@@ -8,38 +8,17 @@ const router = Router();
 router.get("/", async (_req, res: Response) => {
   const productos = await prisma.producto.findMany({
     where: { activo: true },
-    include: {
-      categoria: true,
-      laboratorio: true,
-      lotes: { select: { cantidadActual: true, fechaVencimiento: true } },
-    },
+    include: { categoria: true, laboratorio: true },
     orderBy: { nombre: "asc" },
   });
-
-  const conStock = productos.map((p) => ({
-    ...p,
-    stockTotal: p.lotes.reduce((acc, l) => acc + l.cantidadActual, 0),
-    proximoVencimiento: p.lotes
-      .filter((l) => l.cantidadActual > 0)
-      .sort((a, b) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime())[0]
-      ?.fechaVencimiento ?? null,
-  }));
-
-  res.json(conStock);
+  res.json(productos);
 });
 
 // GET /api/productos/:id
 router.get("/:id", async (req, res: Response) => {
   const producto = await prisma.producto.findUnique({
     where: { id: Number(req.params.id) },
-    include: {
-      categoria: true,
-      laboratorio: true,
-      lotes: {
-        where: { cantidadActual: { gt: 0 } },
-        orderBy: { fechaVencimiento: "asc" },
-      },
-    },
+    include: { categoria: true, laboratorio: true },
   });
 
   if (!producto) {
@@ -49,8 +28,7 @@ router.get("/:id", async (req, res: Response) => {
   res.json(producto);
 });
 
-// POST /api/productos — solo admin. Acepta opcionalmente `loteInicial`
-// para crear producto + primer lote en una sola operación.
+// POST /api/productos — solo admin
 router.post(
   "/",
   autenticar,
@@ -58,96 +36,39 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     const {
       nombre, codigoBarras, descripcion, imagen, presentacion,
-      concentracion, precioVenta, stockMinimo, requiereReceta,
-      categoriaId, laboratorioId, loteInicial,
+      concentracion, precioVenta, stock, stockMinimo, fechaVencimiento,
+      requiereReceta, categoriaId, laboratorioId,
     } = req.body;
 
-    if (!nombre || !precioVenta || !categoriaId) {
-      res.status(400).json({ error: "Faltan campos obligatorios" });
+    // La categoría es opcional; solo nombre y precio son obligatorios.
+    if (!nombre || !precioVenta) {
+      res.status(400).json({ error: "El nombre y el precio de venta son obligatorios" });
       return;
     }
 
-    // Validar lote inicial si se proveyó
-    if (loteInicial) {
-      const { nroLote, cantidad, fechaVencimiento, precioCosto } = loteInicial;
-      if (!nroLote || cantidad === undefined || cantidad === null || !fechaVencimiento || precioCosto === undefined) {
-        res.status(400).json({
-          error: "Si proporcionas lote inicial, todos sus campos son obligatorios (nroLote, cantidad, fechaVencimiento, precioCosto)",
-        });
-        return;
-      }
-      if (Number(cantidad) <= 0) {
-        res.status(400).json({ error: "La cantidad del lote debe ser mayor a 0" });
-        return;
-      }
+    if (stock !== undefined && (!Number.isInteger(Number(stock)) || Number(stock) < 0)) {
+      res.status(400).json({ error: "El stock debe ser un número entero mayor o igual a 0" });
+      return;
     }
 
     const producto = await prisma.producto.create({
       data: {
-        nombre, codigoBarras, descripcion, imagen, presentacion,
-        concentracion, precioVenta, stockMinimo, requiereReceta,
-        categoriaId: Number(categoriaId),
+        nombre,
+        codigoBarras,
+        descripcion,
+        imagen,
+        presentacion,
+        concentracion,
+        precioVenta,
+        stock: stock !== undefined ? Number(stock) : 0,
+        stockMinimo,
+        fechaVencimiento: fechaVencimiento ? new Date(fechaVencimiento) : null,
+        requiereReceta,
+        categoriaId: categoriaId ? Number(categoriaId) : null,
         laboratorioId: laboratorioId ? Number(laboratorioId) : undefined,
-        ...(loteInicial && {
-          lotes: {
-            create: {
-              nroLote: String(loteInicial.nroLote),
-              cantidadActual: Number(loteInicial.cantidad),
-              fechaVencimiento: new Date(loteInicial.fechaVencimiento),
-              precioCosto: loteInicial.precioCosto,
-            },
-          },
-        }),
       },
-      include: { lotes: true },
     });
     res.status(201).json(producto);
-  }
-);
-
-// GET /api/productos/:id/lotes — lista lotes del producto, ordenados por vencimiento
-router.get("/:id/lotes", autenticar, async (req, res: Response) => {
-  const lotes = await prisma.lote.findMany({
-    where: { productoId: Number(req.params.id) },
-    orderBy: { fechaVencimiento: "asc" },
-  });
-  res.json(lotes);
-});
-
-// POST /api/productos/:id/lotes — agrega un lote nuevo al producto (solo admin)
-router.post(
-  "/:id/lotes",
-  autenticar,
-  autorizar("ADMIN"),
-  async (req: AuthRequest, res: Response) => {
-    const productoId = Number(req.params.id);
-    const { nroLote, cantidad, fechaVencimiento, precioCosto } = req.body;
-
-    if (!nroLote || cantidad === undefined || cantidad === null || !fechaVencimiento || precioCosto === undefined) {
-      res.status(400).json({ error: "Todos los campos son obligatorios" });
-      return;
-    }
-    if (Number(cantidad) <= 0) {
-      res.status(400).json({ error: "La cantidad debe ser mayor a 0" });
-      return;
-    }
-
-    const producto = await prisma.producto.findUnique({ where: { id: productoId } });
-    if (!producto) {
-      res.status(404).json({ error: "Producto no encontrado" });
-      return;
-    }
-
-    const lote = await prisma.lote.create({
-      data: {
-        productoId,
-        nroLote: String(nroLote),
-        cantidadActual: Number(cantidad),
-        fechaVencimiento: new Date(fechaVencimiento),
-        precioCosto,
-      },
-    });
-    res.status(201).json(lote);
   }
 );
 
@@ -159,8 +80,8 @@ router.put(
   async (req: AuthRequest, res: Response) => {
     const {
       nombre, codigoBarras, descripcion, imagen, presentacion,
-      concentracion, precioVenta, stockMinimo, requiereReceta,
-      categoriaId, laboratorioId,
+      concentracion, precioVenta, stock, stockMinimo, fechaVencimiento,
+      requiereReceta, categoriaId, laboratorioId,
     } = req.body;
 
     // Allow-list: solo estos campos son editables. Evita que el cliente
@@ -175,15 +96,31 @@ router.put(
     if (precioVenta !== undefined) data.precioVenta = precioVenta;
     if (stockMinimo !== undefined) data.stockMinimo = stockMinimo;
     if (requiereReceta !== undefined) data.requiereReceta = requiereReceta;
-    if (categoriaId !== undefined) data.categoriaId = Number(categoriaId);
+    if (fechaVencimiento !== undefined) {
+      data.fechaVencimiento = fechaVencimiento ? new Date(fechaVencimiento) : null;
+    }
+    if (stock !== undefined) {
+      if (!Number.isInteger(Number(stock)) || Number(stock) < 0) {
+        res.status(400).json({ error: "El stock debe ser un número entero mayor o igual a 0" });
+        return;
+      }
+      data.stock = Number(stock);
+    }
+    if (categoriaId !== undefined) {
+      data.categoriaId = categoriaId ? Number(categoriaId) : null;
+    }
     if (laboratorioId !== undefined) {
       data.laboratorioId = laboratorioId ? Number(laboratorioId) : null;
     }
 
-    const producto = await prisma.producto.update({
-      where: { id: Number(req.params.id) },
-      data,
-    });
+    const id = Number(req.params.id);
+    const existe = await prisma.producto.findUnique({ where: { id } });
+    if (!existe) {
+      res.status(404).json({ error: "Producto no encontrado" });
+      return;
+    }
+
+    const producto = await prisma.producto.update({ where: { id }, data });
     res.json(producto);
   }
 );
