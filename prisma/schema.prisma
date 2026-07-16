@@ -84,6 +84,10 @@ model Producto {
   imagen           String?   @db.Text
   presentacion     String?
   concentracion    String?
+  // `unidadBase` es lo que cuenta el stock (Pastilla, Frasco, Tubo...) y
+  // `precioVenta` es el precio de UNA unidad base. Las formas extra de venta
+  // (Blíster, Caja) viven en `unidadesVenta`, cada una con su equivalencia y precio.
+  unidadBase       String    @default("Unidad") @map("unidad_base")
   precioVenta      Decimal   @map("precio_venta") @db.Decimal(10, 2)
   stock            Int       @default(0)
   stockMinimo      Int       @default(5) @map("stock_minimo")
@@ -96,11 +100,49 @@ model Producto {
 
   categoria        Categoria?  @relation(fields: [categoriaId], references: [id])
   laboratorio      Laboratorio? @relation(fields: [laboratorioId], references: [id])
+  unidadesVenta    UnidadVenta[]
+  entradas         EntradaStock[]
   detalleCompras   DetalleCompra[]
   detalleVentas    DetalleVenta[]
   detalleRecetas   DetalleReceta[]
 
   @@map("productos")
+}
+
+// Formas extra de vender un producto, además de su unidad base.
+// Ej. para una pastilla (unidad base "Pastilla", Q1.00):
+//   { nombre: "Blíster", equivale: 10,  precio: 8.00  }
+//   { nombre: "Caja",    equivale: 100, precio: 70.00 }
+// Vender 1 Blíster descuenta 10 del stock y cobra Q8.00.
+// Un producto que solo se vende de una forma (un jarabe) no tiene ninguna.
+model UnidadVenta {
+  id         Int      @id @default(autoincrement())
+  productoId Int      @map("producto_id")
+  nombre     String
+  equivale   Int      // cuántas unidades base contiene
+  precio     Decimal  @db.Decimal(10, 2)
+
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@unique([productoId, nombre])
+  @@map("unidades_venta")
+}
+
+// Cada ingreso de mercadería con su propio vencimiento.
+// Es interna: el usuario nunca la ve ni la escribe. Permite que un mismo
+// producto tenga unidades con fechas de vencimiento distintas.
+// `Producto.stock` y `Producto.fechaVencimiento` se derivan de aquí.
+model EntradaStock {
+  id               Int       @id @default(autoincrement())
+  productoId       Int       @map("producto_id")
+  cantidad         Int       // unidades que quedan de esta entrada
+  fechaVencimiento DateTime? @map("fecha_vencimiento")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  producto      Producto       @relation(fields: [productoId], references: [id])
+  detalleCompra DetalleCompra?
+
+  @@map("entradas_stock")
 }
 
 // ─── PROVEEDORES & COMPRAS ────────────────────────────────────────────────────
@@ -143,11 +185,16 @@ model DetalleCompra {
   id          Int      @id @default(autoincrement())
   compraId    Int      @map("compra_id")
   productoId  Int      @map("producto_id")
-  cantidad    Int
-  precioCosto Decimal  @map("precio_costo") @db.Decimal(10, 2)
+  entradaId   Int?     @unique @map("entrada_id")
+  // Forma en que entró la mercadería (ej. 2 Cajas de 100 = 200 al stock)
+  unidadNombre   String @default("Unidad") @map("unidad_nombre")
+  unidadEquivale Int    @default(1) @map("unidad_equivale")
+  cantidad    Int      // cantidad en la unidad comprada (ej. 2 cajas)
+  precioCosto Decimal  @map("precio_costo") @db.Decimal(10, 2) // costo de UNA unidad comprada
 
-  compra      Compra   @relation(fields: [compraId], references: [id])
-  producto    Producto @relation(fields: [productoId], references: [id])
+  compra      Compra        @relation(fields: [compraId], references: [id])
+  producto    Producto      @relation(fields: [productoId], references: [id])
+  entrada     EntradaStock? @relation(fields: [entradaId], references: [id])
 
   @@map("detalle_compras")
 }
@@ -240,8 +287,12 @@ model DetalleVenta {
   id          Int      @id @default(autoincrement())
   ventaId     Int      @map("venta_id")
   productoId  Int      @map("producto_id")
-  cantidad    Int
-  precioUnit  Decimal  @map("precio_unit") @db.Decimal(10, 2)
+  // Forma en que se vendió (se guarda el nombre y la equivalencia del momento,
+  // para que el historial no cambie si luego se editan los precios o unidades).
+  unidadNombre   String @default("Unidad") @map("unidad_nombre")
+  unidadEquivale Int    @default(1) @map("unidad_equivale")
+  cantidad    Int      // cantidad en la unidad vendida (ej. 2 blísters)
+  precioUnit  Decimal  @map("precio_unit") @db.Decimal(10, 2) // precio de UNA unidad vendida
   subtotal    Decimal  @db.Decimal(10, 2)
 
   venta       Venta    @relation(fields: [ventaId], references: [id])

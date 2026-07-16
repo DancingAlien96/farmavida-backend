@@ -25,7 +25,12 @@ export async function notificarVenta(ventaId: number): Promise<void> {
   const filas = venta.detalles
     .map(
       (d) => `<tr>
-        <td style="padding:6px 0;border-bottom:1px solid #f3f4f6;">${d.producto.nombre}</td>
+        <td style="padding:6px 0;border-bottom:1px solid #f3f4f6;">
+          ${d.producto.nombre}
+          <span style="color:#9ca3af;font-size:11px;">· ${d.unidadNombre}${
+            d.unidadEquivale > 1 ? ` (${d.unidadEquivale} c/u)` : ""
+          }</span>
+        </td>
         <td style="padding:6px 0;border-bottom:1px solid #f3f4f6;text-align:center;">${d.cantidad}</td>
         <td style="padding:6px 0;border-bottom:1px solid #f3f4f6;text-align:right;">${q(Number(d.subtotal))}</td>
       </tr>`
@@ -171,11 +176,13 @@ export async function notificarResumenDiario(): Promise<void> {
   const anuladas = ventas.filter((v) => v.estado === "ANULADA");
   const total = completadas.reduce((acc, v) => acc + Number(v.total), 0);
 
-  // Productos más vendidos del día
+  // Productos más vendidos del día. Se cuenta en unidades base para poder
+  // comparar: 1 caja de 100 pesa más que 3 pastillas sueltas.
   const conteo = new Map<string, number>();
   for (const v of completadas) {
     for (const d of v.detalles) {
-      conteo.set(d.producto.nombre, (conteo.get(d.producto.nombre) ?? 0) + d.cantidad);
+      const base = d.cantidad * d.unidadEquivale;
+      conteo.set(d.producto.nombre, (conteo.get(d.producto.nombre) ?? 0) + base);
     }
   }
   const top = [...conteo.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);

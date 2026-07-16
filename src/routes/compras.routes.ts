@@ -1,6 +1,8 @@
 import { Router, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { autenticar, autorizar, AuthRequest } from "../middlewares/auth.middleware";
+import { sincronizarProducto } from "../lib/stock";
+import { ErrorNegocio } from "../lib/errores";
 
 const router = Router();
 
@@ -8,7 +10,10 @@ interface ItemCompra {
   productoId: number;
   cantidad: number;
   precioCosto: number;
-  // Opcional: si viene, actualiza la fecha de vencimiento del producto.
+  // Opcional: forma en que entra la mercadería (ej. Caja de 100).
+  // Si no viene, entra en la unidad base del producto.
+  unidadVentaId?: number;
+  // Opcional: vencimiento de esta entrada.
   fechaVencimiento?: string;
 }
 
@@ -42,7 +47,9 @@ router.get("/:id", autenticar, async (req: AuthRequest, res: Response) => {
       proveedor: true,
       detalles: {
         include: {
-          producto: { select: { id: true, nombre: true, presentacion: true } },
+          producto: {
+            select: { id: true, nombre: true, presentacion: true, unidadBase: true },
+          },
         },
       },
     },
@@ -63,6 +70,8 @@ router.get("/:id", autenticar, async (req: AuthRequest, res: Response) => {
     detalles: compra.detalles.map((d) => ({
       id: d.id,
       cantidad: d.cantidad,
+      unidadNombre: d.unidadNombre,
+      unidadEquivale: d.unidadEquivale,
       precioCosto: d.precioCosto,
       subtotal: Number(d.precioCosto) * d.cantidad,
       producto: d.producto,
@@ -134,24 +143,51 @@ router.post("/", autenticar, autorizar("ADMIN"), async (req: AuthRequest, res: R
     });
 
     for (const it of items) {
-      // Suma la cantidad comprada al stock del producto y,
-      // si se indicó, actualiza su fecha de vencimiento.
-      await tx.producto.update({
-        where: { id: Number(it.productoId) },
+      const productoId = Number(it.productoId);
+      const producto = await tx.producto.findUnique({
+        where: { id: productoId },
+        include: { unidadesVenta: true },
+      });
+      if (!producto) throw new ErrorNegocio(`Producto ${productoId} no encontrado`, 404);
+
+      // Resuelve la forma en que entra la mercadería (ej. Caja de 100).
+      // Sin `unidadVentaId` entra en la unidad base.
+      let unidadNombre = producto.unidadBase;
+      let unidadEquivale = 1;
+      if (it.unidadVentaId) {
+        const unidad = producto.unidadesVenta.find((u) => u.id === Number(it.unidadVentaId));
+        if (!unidad) {
+          throw new ErrorNegocio(`La forma de compra elegida no existe para "${producto.nombre}"`);
+        }
+        unidadNombre = unidad.nombre;
+        unidadEquivale = unidad.equivale;
+      }
+
+      // Cada item crea su propia entrada de stock con su vencimiento, de modo
+      // que un mismo producto puede tener unidades con fechas distintas.
+      // La entrada se guarda en unidades BASE: 2 cajas de 100 = 200 pastillas.
+      const entrada = await tx.entradaStock.create({
         data: {
-          stock: { increment: Number(it.cantidad) },
-          ...(it.fechaVencimiento && { fechaVencimiento: new Date(it.fechaVencimiento) }),
+          productoId,
+          cantidad: Number(it.cantidad) * unidadEquivale,
+          fechaVencimiento: it.fechaVencimiento ? new Date(it.fechaVencimiento) : null,
         },
       });
 
       await tx.detalleCompra.create({
         data: {
           compraId: nuevaCompra.id,
-          productoId: Number(it.productoId),
+          productoId,
+          entradaId: entrada.id,
+          unidadNombre,
+          unidadEquivale,
           cantidad: Number(it.cantidad),
           precioCosto: it.precioCosto,
         },
       });
+
+      // Recalcula stock total y vencimiento más próximo del producto
+      await sincronizarProducto(tx, productoId);
     }
 
     return nuevaCompra;
@@ -167,7 +203,7 @@ router.patch("/:id/anular", autenticar, autorizar("ADMIN"), async (req: AuthRequ
 
   const compra = await prisma.compra.findUnique({
     where: { id },
-    include: { detalles: { include: { producto: true } } },
+    include: { detalles: { include: { producto: true, entrada: true } } },
   });
 
   if (!compra) {
@@ -179,23 +215,31 @@ router.patch("/:id/anular", autenticar, autorizar("ADMIN"), async (req: AuthRequ
     return;
   }
 
-  // No se puede anular si esa mercadería ya se vendió (el stock quedaría negativo)
+  // Solo se puede anular si la mercadería de ESTA compra sigue intacta:
+  // su entrada debe conservar todas las unidades base que ingresaron.
   for (const d of compra.detalles) {
-    if (d.producto.stock < d.cantidad) {
+    const ingresaron = d.cantidad * d.unidadEquivale;
+    const quedan = d.entrada?.cantidad ?? 0;
+    if (quedan < ingresaron) {
+      const base = d.producto.unidadBase.toLowerCase();
       res.status(409).json({
-        error: `No se puede anular: "${d.producto.nombre}" ya no tiene las ${d.cantidad} unidades de esta compra en stock (quedan ${d.producto.stock}). Probablemente ya se vendieron.`,
+        error: `No se puede anular: de las ${ingresaron} ${base}(s) de "${d.producto.nombre}" que entraron con esta compra ya solo quedan ${quedan}. Probablemente se vendieron.`,
       });
       return;
     }
   }
 
   await prisma.$transaction(async (tx) => {
-    // Devolver (restar) del stock lo que había entrado con esta compra
     for (const d of compra.detalles) {
-      await tx.producto.update({
-        where: { id: d.productoId },
-        data: { stock: { decrement: d.cantidad } },
-      });
+      if (d.entradaId) {
+        // Se desliga el detalle y se elimina la entrada que creó esta compra
+        await tx.detalleCompra.update({
+          where: { id: d.id },
+          data: { entradaId: null },
+        });
+        await tx.entradaStock.delete({ where: { id: d.entradaId } });
+      }
+      await sincronizarProducto(tx, d.productoId);
     }
     await tx.compra.update({
       where: { id },

@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import cron from "node-cron";
 import { verificarCorreo } from "./lib/mailer";
+import { ErrorNegocio } from "./lib/errores";
 import { notificarResumenDiario, notificarPorVencer } from "./lib/notificaciones";
 
 import authRoutes from "./routes/auth.routes";
@@ -40,7 +41,10 @@ app.use("/api/compras", comprasRoutes);
 app.use("/api/clientes", clientesRoutes);
 app.use("/api/notificaciones", notificacionesRoutes);
 
-// Error handler genérico
+// Error handler genérico.
+// Solo los errores de negocio muestran su mensaje al usuario; el resto se
+// registra en el servidor y devuelve un texto genérico, para no filtrar
+// detalles internos (rutas de archivos, SQL, etc.).
 app.use(
   (
     err: Error,
@@ -48,8 +52,12 @@ app.use(
     res: express.Response,
     _next: express.NextFunction
   ) => {
-    console.error(err.message);
-    res.status(500).json({ error: err.message || "Error interno del servidor" });
+    if (err instanceof ErrorNegocio) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    console.error("[ERROR]", err);
+    res.status(500).json({ error: "Ocurrió un error inesperado. Intenta de nuevo." });
   }
 );
 

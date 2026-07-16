@@ -3,6 +3,8 @@ import { prisma } from "../lib/prisma";
 import { autenticar, autorizar, AuthRequest } from "../middlewares/auth.middleware";
 import { MetodoPago } from "../../generated/prisma/enums";
 import { notificarVenta, notificarStockBajo } from "../lib/notificaciones";
+import { descontarStock, devolverStock } from "../lib/stock";
+import { ErrorNegocio } from "../lib/errores";
 
 const router = Router();
 
@@ -71,25 +73,46 @@ router.post(
         const cantidad = Number(item.cantidad);
         const producto = await tx.producto.findUnique({
           where: { id: Number(item.productoId) },
+          include: { unidadesVenta: true },
         });
-        if (!producto) throw new Error(`Producto ${item.productoId} no encontrado`);
-        if (producto.stock < cantidad) {
-          throw new Error(
-            `Stock insuficiente de "${producto.nombre}": disponible ${producto.stock}`
+        if (!producto) throw new ErrorNegocio(`Producto ${item.productoId} no encontrado`, 404);
+
+        // Resuelve la forma de venta. Sin `unidadVentaId` se vende la unidad base.
+        // El nombre, la equivalencia y el precio SIEMPRE salen de la BD.
+        let unidadNombre = producto.unidadBase;
+        let unidadEquivale = 1;
+        let precioUnit = Number(producto.precioVenta);
+
+        if (item.unidadVentaId) {
+          const unidad = producto.unidadesVenta.find(
+            (u) => u.id === Number(item.unidadVentaId)
           );
+          if (!unidad) {
+            throw new ErrorNegocio(`La forma de venta elegida no existe para "${producto.nombre}"`);
+          }
+          unidadNombre = unidad.nombre;
+          unidadEquivale = unidad.equivale;
+          precioUnit = Number(unidad.precio);
         }
 
-        // El precio unitario SIEMPRE proviene del producto en BD, no del cliente.
-        const precioUnit = Number(producto.precioVenta);
         const subtotal = precioUnit * cantidad;
         total += subtotal;
-        detalles.push({ productoId: producto.id, cantidad, precioUnit, subtotal });
-
-        // Descontar stock
-        await tx.producto.update({
-          where: { id: producto.id },
-          data: { stock: { decrement: cantidad } },
+        detalles.push({
+          productoId: producto.id,
+          unidadNombre,
+          unidadEquivale,
+          cantidad,
+          precioUnit,
+          subtotal,
         });
+
+        // Descuenta FIFO en unidades BASE: 2 blísters de 10 = 20 pastillas.
+        await descontarStock(
+          tx,
+          producto.id,
+          cantidad * unidadEquivale,
+          producto.nombre
+        );
       }
 
       const nuevaVenta = await tx.venta.create({
@@ -142,12 +165,10 @@ router.patch(
     }
 
     await prisma.$transaction(async (tx) => {
-      // Devolver el stock vendido a cada producto
+      // Devolver el stock vendido: vuelve a la entrada de la que salió.
+      // Se reintegra en unidades BASE (2 blísters de 10 → 20 pastillas).
       for (const d of venta.detalles) {
-        await tx.producto.update({
-          where: { id: d.productoId },
-          data: { stock: { increment: d.cantidad } },
-        });
+        await devolverStock(tx, d.productoId, d.cantidad * d.unidadEquivale);
       }
       await tx.venta.update({
         where: { id },
