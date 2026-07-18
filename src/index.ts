@@ -20,8 +20,26 @@ import notificacionesRoutes from "./routes/notificaciones.routes";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middlewares globales
-app.use(cors());
+// ─── CORS ────────────────────────────────────────────────────────────────────
+// En producción, CORS_ORIGIN debe listar los dominios reales del frontend
+// (separados por coma). Si se deja vacío se permite cualquier origen, lo cual
+// solo es aceptable en desarrollo.
+const origenesPermitidos = process.env.CORS_ORIGIN?.split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+if (process.env.NODE_ENV === "production" && !origenesPermitidos?.length) {
+  console.warn(
+    "⚠️  CORS_ORIGIN no está configurado: la API acepta peticiones de CUALQUIER dominio.\n" +
+      "   Defínelo en el .env con el dominio del frontend, ej: CORS_ORIGIN=https://farmavida.com"
+  );
+}
+
+app.use(
+  cors({
+    origin: origenesPermitidos?.length ? origenesPermitidos : true,
+  })
+);
 app.use(express.json());
 
 // Health check

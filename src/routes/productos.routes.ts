@@ -63,8 +63,8 @@ const INCLUDE_PRODUCTO = {
   unidadesVenta: { orderBy: { equivale: "asc" } },
 } as const;
 
-// GET /api/productos
-router.get("/", async (_req, res: Response) => {
+// GET /api/productos — requiere sesión: el inventario es información del negocio
+router.get("/", autenticar, async (_req, res: Response) => {
   const productos = await prisma.producto.findMany({
     where: { activo: true },
     include: INCLUDE_PRODUCTO,
@@ -74,7 +74,7 @@ router.get("/", async (_req, res: Response) => {
 });
 
 // GET /api/productos/:id
-router.get("/:id", async (req, res: Response) => {
+router.get("/:id", autenticar, async (req, res: Response) => {
   const producto = await prisma.producto.findUnique({
     where: { id: Number(req.params.id) },
     include: INCLUDE_PRODUCTO,

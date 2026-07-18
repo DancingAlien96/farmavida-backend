@@ -82,16 +82,12 @@ router.get("/:id", autenticar, async (req: AuthRequest, res: Response) => {
 // POST /api/compras — crear compra RECIBIDA con sus lotes en una transacción (solo admin)
 router.post("/", autenticar, autorizar("ADMIN"), async (req: AuthRequest, res: Response) => {
   const { proveedorId, items, observacion, fecha } = req.body as {
-    proveedorId: number;
+    proveedorId?: number | null;
     items: ItemCompra[];
     observacion?: string;
     fecha?: string;
   };
 
-  if (!proveedorId) {
-    res.status(400).json({ error: "El proveedor es obligatorio" });
-    return;
-  }
   if (!Array.isArray(items) || items.length === 0) {
     res.status(400).json({ error: "Debes agregar al menos un item" });
     return;
@@ -118,10 +114,13 @@ router.post("/", autenticar, autorizar("ADMIN"), async (req: AuthRequest, res: R
     }
   }
 
-  const proveedor = await prisma.proveedor.findUnique({ where: { id: Number(proveedorId) } });
-  if (!proveedor || !proveedor.activo) {
-    res.status(404).json({ error: "Proveedor no encontrado o inactivo" });
-    return;
+  // El proveedor es opcional; si se envía, debe existir y estar activo.
+  if (proveedorId) {
+    const proveedor = await prisma.proveedor.findUnique({ where: { id: Number(proveedorId) } });
+    if (!proveedor || !proveedor.activo) {
+      res.status(404).json({ error: "Proveedor no encontrado o inactivo" });
+      return;
+    }
   }
 
   // Calcular total
@@ -134,7 +133,7 @@ router.post("/", autenticar, autorizar("ADMIN"), async (req: AuthRequest, res: R
   const compra = await prisma.$transaction(async (tx) => {
     const nuevaCompra = await tx.compra.create({
       data: {
-        proveedorId: Number(proveedorId),
+        proveedorId: proveedorId ? Number(proveedorId) : null,
         fecha: fecha ? new Date(fecha) : new Date(),
         total,
         estado: "RECIBIDA",

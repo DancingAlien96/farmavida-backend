@@ -163,13 +163,13 @@ model Proveedor {
 
 model Compra {
   id           Int            @id @default(autoincrement())
-  proveedorId  Int            @map("proveedor_id")
+  proveedorId  Int?           @map("proveedor_id")
   fecha        DateTime       @default(now())
   total        Decimal        @db.Decimal(10, 2)
   estado       EstadoCompra   @default(PENDIENTE)
   observacion  String?
 
-  proveedor    Proveedor      @relation(fields: [proveedorId], references: [id])
+  proveedor    Proveedor?     @relation(fields: [proveedorId], references: [id])
   detalles     DetalleCompra[]
 
   @@map("compras")

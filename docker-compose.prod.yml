@@ -32,6 +32,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       PORT: 3000
       NODE_ENV: production
+      # Dominios del frontend autorizados (ej. https://farmavida.com).
+      # Vacío = acepta cualquier origen; en producción conviene definirlo.
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
       # Notificaciones por correo (opcional: si van vacías, no se envían correos)
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
